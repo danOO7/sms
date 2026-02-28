@@ -13,11 +13,12 @@ const INVITE_TTL_MIN = Number(process.env.INVITE_TTL_MIN || 10);
 const FIRST_PROMPT = [
   'Quick start — reply in one message using this format:',
   '1) Item + condition',
-  '2) Sell-by date (YYYY-MM-DD)',
-  '3) Minimum price (USD)',
-  '4) Preferred meetup area (private, not for listing)',
-  '5) Weekday + weekend availability in the next 2 weeks',
-  '6) Ad tone: funny, serious, simple, or urgent'
+  '2) Selling area: city, state, postal code',
+  '3) Sell-by date (YYYY-MM-DD)',
+  '4) Minimum price (USD)',
+  '5) Preferred meetup area (private, not for listing)',
+  '6) Weekday + weekend availability in the next 2 weeks',
+  '7) Ad tone: funny, serious, simple, or urgent'
 ].join('\n');
 
 function median(nums) {
@@ -63,63 +64,33 @@ async function fetchText(url) {
   }
 }
 
-async function buildMarketPlan(itemSummary = '', meetupArea = '', minimumPrice = null) {
+async function buildMarketPlan(itemSummary = '', sellingArea = '', minimumPrice = null) {
   const query = encodeURIComponent(itemSummary || 'used item');
-  const area = encodeURIComponent(meetupArea || 'local');
+  const area = encodeURIComponent(sellingArea || 'local');
 
   const urls = {
-    craigslist: `https://www.craigslist.org/search/sss?query=${query}`,
-    ebay: `https://www.ebay.com/sch/i.html?_nkw=${query}`,
-    facebook: `https://www.facebook.com/marketplace/search?query=${query}`
+    craigslist: `https://www.craigslist.org/search/sss?query=${query}`
   };
 
-  const [craigslistHtml, ebayHtml, facebookHtml] = await Promise.all([
-    fetchText(urls.craigslist),
-    fetchText(urls.ebay),
-    fetchText(urls.facebook)
-  ]);
+  const craigslistHtml = await fetchText(urls.craigslist);
+  const prices = extractPriceSamples(craigslistHtml);
 
-  const stats = {
-    craigslist: extractPriceSamples(craigslistHtml),
-    ebay: extractPriceSamples(ebayHtml),
-    facebook: extractPriceSamples(facebookHtml)
+  const summary = {
+    craigslist: {
+      count: prices.length,
+      median: median(prices),
+      low: prices.length ? Math.min(...prices) : null,
+      high: prices.length ? Math.max(...prices) : null,
+      url: urls.craigslist
+    }
   };
 
-  const summary = Object.fromEntries(
-    Object.entries(stats).map(([k, arr]) => [
-      k,
-      {
-        count: arr.length,
-        median: median(arr),
-        low: arr.length ? Math.min(...arr) : null,
-        high: arr.length ? Math.max(...arr) : null,
-        url: urls[k]
-      }
-    ])
-  );
-
-  const itemClass = classifyItem(itemSummary);
-  const baseline = median(
-    Object.values(summary)
-      .map((s) => s.median)
-      .filter((v) => Number.isFinite(v))
-  ) || (Number.isFinite(minimumPrice) ? minimumPrice : 100);
-
+  const baseline = summary.craigslist.median || (Number.isFinite(minimumPrice) ? minimumPrice : 100);
   const quickSale = Math.max(5, Math.round(baseline * 0.9));
   const target = Math.max(5, Math.round(baseline));
   const stretch = Math.max(5, Math.round(baseline * 1.15));
 
-  let primary = 'facebook';
-  if (itemClass === 'shippable') primary = 'ebay';
-  if (itemClass === 'bulky') primary = summary.craigslist.count >= summary.facebook.count ? 'craigslist' : 'facebook';
-
-  const ranked = Object.entries(summary)
-    .sort((a, b) => (b[1].count || 0) - (a[1].count || 0))
-    .map(([k]) => k);
-  const secondary = ranked.find((k) => k !== primary) || (primary === 'ebay' ? 'facebook' : 'ebay');
-
-  const totalComps = Object.values(summary).reduce((acc, s) => acc + (s.count || 0), 0);
-  const confidence = totalComps >= 20 ? 'high' : totalComps >= 8 ? 'medium' : 'low';
+  const confidence = summary.craigslist.count >= 12 ? 'high' : summary.craigslist.count >= 5 ? 'medium' : 'low';
 
   return {
     area,
@@ -127,8 +98,8 @@ async function buildMarketPlan(itemSummary = '', meetupArea = '', minimumPrice =
     quickSale,
     target,
     stretch,
-    primary,
-    secondary,
+    primary: 'craigslist',
+    secondary: null,
     confidence
   };
 }
@@ -318,7 +289,9 @@ function mergeSellerProfileFromText(existingProfile, text) {
     const cleaned = line.replace(/^\d+[\).:-]?\s*/, '');
     const lower = cleaned.toLowerCase();
 
-    if (lower.includes('sell-by') || lower.includes('sell by') || lower.includes('deadline')) {
+    if (lower.includes('city') || lower.includes('state') || lower.includes('postal') || lower.includes('zip')) {
+      profile.sellingArea = cleaned;
+    } else if (lower.includes('sell-by') || lower.includes('sell by') || lower.includes('deadline')) {
       const match = cleaned.match(/(\d{4}-\d{2}-\d{2})/);
       if (match) profile.sellByDate = match[1];
     } else if (lower.includes('minimum') || lower.startsWith('min ')) {
@@ -336,11 +309,16 @@ function mergeSellerProfileFromText(existingProfile, text) {
     }
   }
 
+  if (!profile.sellingArea) {
+    const zipMatch = String(text || '').match(/\b\d{5}(?:-\d{4})?\b/);
+    if (zipMatch) profile.sellingArea = `Postal code ${zipMatch[0]}`;
+  }
+
   return profile;
 }
 
 function missingSellerFields(profile) {
-  const required = ['sellByDate', 'minimumPrice', 'meetupArea', 'availability', 'adTone'];
+  const required = ['sellingArea', 'sellByDate', 'minimumPrice', 'meetupArea', 'availability', 'adTone'];
   return required.filter((f) => profile[f] === undefined || profile[f] === null || profile[f] === '');
 }
 
@@ -425,6 +403,7 @@ app.post('/api/v1/webhooks/convo/message', async (req, res) => {
   const missing = missingSellerFields(interaction.sellerProfile || {});
   if (missing.length > 0) {
     const labels = {
+      sellingArea: 'selling area (city, state, postal code)',
       sellByDate: 'sell-by date (YYYY-MM-DD)',
       minimumPrice: 'minimum price (USD)',
       meetupArea: 'preferred meetup area',
@@ -442,7 +421,7 @@ app.post('/api/v1/webhooks/convo/message', async (req, res) => {
 
     if (!summary.marketPlan) {
       try {
-        const plan = await buildMarketPlan(summary.itemSummary, summary.meetupArea, summary.minimumPrice);
+        const plan = await buildMarketPlan(summary.itemSummary, summary.sellingArea, summary.minimumPrice);
         summary.marketPlan = plan;
         interaction.sellerProfile = summary;
         updateInteraction(interaction);
@@ -454,6 +433,7 @@ app.post('/api/v1/webhooks/convo/message', async (req, res) => {
     const plan = summary.marketPlan;
     const lines = [
       'Great — got everything I need to draft your listing.',
+      `Selling area: ${summary.sellingArea}`,
       `Sell-by date: ${summary.sellByDate}`,
       `Minimum price: $${summary.minimumPrice}`,
       `Ad tone: ${summary.adTone}`,
@@ -462,13 +442,11 @@ app.post('/api/v1/webhooks/convo/message', async (req, res) => {
 
     if (plan) {
       lines.push('');
-      lines.push(`Best marketplace: ${plan.primary} (backup: ${plan.secondary}, confidence: ${plan.confidence})`);
+      lines.push(`Best marketplace: ${plan.primary} (confidence: ${plan.confidence})`);
       lines.push(`Suggested pricing — quick sale: $${plan.quickSale}, target: $${plan.target}, stretch: $${plan.stretch}`);
-      lines.push('Comp links:');
-      lines.push(`- Craigslist: ${plan.summary.craigslist.url}`);
-      lines.push(`- eBay: ${plan.summary.ebay.url}`);
-      lines.push(`- Facebook Marketplace: ${plan.summary.facebook.url}`);
-      lines.push('Next: send 3-6 photos and I will draft your final listing text for approval.');
+      lines.push('Craigslist comps:');
+      lines.push(`- ${plan.summary.craigslist.url}`);
+      lines.push('Next: send 3-6 photos and I will draft your final Craigslist listing text for approval.');
     }
 
     try {
