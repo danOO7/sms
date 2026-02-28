@@ -78,3 +78,5 @@ onInboundMessage(channelId, msg):
 - Read `references/api-spec.md` for implementation-ready endpoint contracts.
 - Read `references/node-ts-integration.md` for Node/TypeScript architecture and provider abstraction.
 - Read `references/architecture-notes.md` for sequence, API boundaries, and security review prompts.
+- Read `references/convo-selling-agent-workflow.md` for post-QR conversation orchestration (intake → photos → condition → market research → listing approval).
+- Read `references/listing-template.md` for listing draft output format and approval prompt.
