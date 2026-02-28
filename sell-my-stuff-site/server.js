@@ -20,6 +20,119 @@ const FIRST_PROMPT = [
   '6) Ad tone: funny, serious, simple, or urgent'
 ].join('\n');
 
+function median(nums) {
+  if (!nums.length) return null;
+  const sorted = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+function classifyItem(itemText = '') {
+  const t = itemText.toLowerCase();
+  const bulky = ['sofa', 'couch', 'table', 'dresser', 'bed', 'mattress', 'desk', 'chair', 'bike'].some((k) => t.includes(k));
+  const shippable = ['iphone', 'phone', 'laptop', 'camera', 'watch', 'gpu', 'console', 'headphones', 'tablet'].some((k) => t.includes(k));
+  if (bulky) return 'bulky';
+  if (shippable) return 'shippable';
+  return 'general';
+}
+
+function extractPriceSamples(text = '') {
+  const samples = [];
+  const rx = /\$\s?([0-9]{2,5}(?:\.[0-9]{2})?)/g;
+  for (const m of text.matchAll(rx)) {
+    const value = Number(m[1]);
+    if (Number.isFinite(value) && value >= 10 && value <= 50000) samples.push(value);
+  }
+  return [...new Set(samples)].slice(0, 40);
+}
+
+async function fetchText(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, {
+      headers: { 'user-agent': 'Mozilla/5.0 SellMyStuffBot/1.0' },
+      signal: controller.signal
+    });
+    if (!response.ok) return '';
+    return await response.text();
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function buildMarketPlan(itemSummary = '', meetupArea = '', minimumPrice = null) {
+  const query = encodeURIComponent(itemSummary || 'used item');
+  const area = encodeURIComponent(meetupArea || 'local');
+
+  const urls = {
+    craigslist: `https://www.craigslist.org/search/sss?query=${query}`,
+    ebay: `https://www.ebay.com/sch/i.html?_nkw=${query}`,
+    facebook: `https://www.facebook.com/marketplace/search?query=${query}`
+  };
+
+  const [craigslistHtml, ebayHtml, facebookHtml] = await Promise.all([
+    fetchText(urls.craigslist),
+    fetchText(urls.ebay),
+    fetchText(urls.facebook)
+  ]);
+
+  const stats = {
+    craigslist: extractPriceSamples(craigslistHtml),
+    ebay: extractPriceSamples(ebayHtml),
+    facebook: extractPriceSamples(facebookHtml)
+  };
+
+  const summary = Object.fromEntries(
+    Object.entries(stats).map(([k, arr]) => [
+      k,
+      {
+        count: arr.length,
+        median: median(arr),
+        low: arr.length ? Math.min(...arr) : null,
+        high: arr.length ? Math.max(...arr) : null,
+        url: urls[k]
+      }
+    ])
+  );
+
+  const itemClass = classifyItem(itemSummary);
+  const baseline = median(
+    Object.values(summary)
+      .map((s) => s.median)
+      .filter((v) => Number.isFinite(v))
+  ) || (Number.isFinite(minimumPrice) ? minimumPrice : 100);
+
+  const quickSale = Math.max(5, Math.round(baseline * 0.9));
+  const target = Math.max(5, Math.round(baseline));
+  const stretch = Math.max(5, Math.round(baseline * 1.15));
+
+  let primary = 'facebook';
+  if (itemClass === 'shippable') primary = 'ebay';
+  if (itemClass === 'bulky') primary = summary.craigslist.count >= summary.facebook.count ? 'craigslist' : 'facebook';
+
+  const ranked = Object.entries(summary)
+    .sort((a, b) => (b[1].count || 0) - (a[1].count || 0))
+    .map(([k]) => k);
+  const secondary = ranked.find((k) => k !== primary) || (primary === 'ebay' ? 'facebook' : 'ebay');
+
+  const totalComps = Object.values(summary).reduce((acc, s) => acc + (s.count || 0), 0);
+  const confidence = totalComps >= 20 ? 'high' : totalComps >= 8 ? 'medium' : 'low';
+
+  return {
+    area,
+    summary,
+    quickSale,
+    target,
+    stretch,
+    primary,
+    secondary,
+    confidence
+  };
+}
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
@@ -326,15 +439,40 @@ app.post('/api/v1/webhooks/convo/message', async (req, res) => {
     }
   } else {
     const summary = interaction.sellerProfile;
-    const ack = [
+
+    if (!summary.marketPlan) {
+      try {
+        const plan = await buildMarketPlan(summary.itemSummary, summary.meetupArea, summary.minimumPrice);
+        summary.marketPlan = plan;
+        interaction.sellerProfile = summary;
+        updateInteraction(interaction);
+      } catch (error) {
+        console.error('market plan generation error', error);
+      }
+    }
+
+    const plan = summary.marketPlan;
+    const lines = [
       'Great — got everything I need to draft your listing.',
       `Sell-by date: ${summary.sellByDate}`,
       `Minimum price: $${summary.minimumPrice}`,
       `Ad tone: ${summary.adTone}`,
       'I saved your meetup area and availability privately for buyer coordination.'
-    ].join('\n');
+    ];
+
+    if (plan) {
+      lines.push('');
+      lines.push(`Best marketplace: ${plan.primary} (backup: ${plan.secondary}, confidence: ${plan.confidence})`);
+      lines.push(`Suggested pricing — quick sale: $${plan.quickSale}, target: $${plan.target}, stretch: $${plan.stretch}`);
+      lines.push('Comp links:');
+      lines.push(`- Craigslist: ${plan.summary.craigslist.url}`);
+      lines.push(`- eBay: ${plan.summary.ebay.url}`);
+      lines.push(`- Facebook Marketplace: ${plan.summary.facebook.url}`);
+      lines.push('Next: send 3-6 photos and I will draft your final listing text for approval.');
+    }
+
     try {
-      await provider.sendMessage(channelId, ack);
+      await provider.sendMessage(channelId, lines.join('\n'));
     } catch (error) {
       console.error('profile-complete ack send error', error);
     }
