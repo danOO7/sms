@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sell My Stuff</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="https://unpkg.com/lucide@latest"></script>
+  </head>
+  <body>
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+
+    <main class="container">
+      <section class="hero-card">
+        <p class="eyebrow"><i data-lucide="shield"></i> Private Convo + XMTP Flow</p>
+        <h1>Sell your stuff in a private channel</h1>
+        <p class="subtext">Click once. Scan QR. Continue in a private convo thread created just for this interaction.</p>
+
+        <div class="actions">
+          <button id="sellBtn" class="primary-btn">
+            <i data-lucide="tag"></i>
+            Sell my stuff
+          </button>
+          <button id="resetBtn" class="ghost-btn" hidden>Start a new private interaction</button>
+        </div>
+
+        <div id="status" class="status">Ready.</div>
+      </section>
+
+      <section id="qrPanel" class="qr-card" hidden>
+        <h2><i data-lucide="qr-code"></i> Scan to open private Convo channel</h2>
+        <img id="qrImage" alt="Convo invite QR code" />
+        <div class="meta-grid">
+          <div><span>Interaction</span><code id="interactionId">-</code></div>
+          <div><span>Channel</span><code id="channelId">-</code></div>
+          <div><span>Expires</span><code id="expiresAt">-</code></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/main.js" type="module"></script>
+  </body>
+</html>
