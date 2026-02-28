@@ -18,10 +18,41 @@
       <section class="hero-card">
         <p class="eyebrow"><i data-lucide="shield"></i> Private Convo + XMTP Flow</p>
         <h1>Sell your stuff in a private channel</h1>
-        <p class="subtext">Click once. Scan QR. Continue in a private convo thread created just for this interaction.</p>
+        <p class="subtext">Fill in your item details. Click once. Scan QR. Continue in a private convo thread created just for this interaction.</p>
+
+        <form id="intakeForm" class="intake-form">
+          <div class="form-row">
+            <label for="itemName">Item</label>
+            <input id="itemName" type="text" placeholder="e.g. iPhone 14 Pro 256GB" required />
+          </div>
+          <div class="form-row">
+            <label for="condition">Condition</label>
+            <select id="condition">
+              <option value="new">New</option>
+              <option value="like new">Like New</option>
+              <option value="used" selected>Used</option>
+              <option value="fair">Fair</option>
+              <option value="for parts">For Parts</option>
+            </select>
+          </div>
+          <div class="form-row two-col">
+            <div>
+              <label for="targetPrice">Asking Price ($)</label>
+              <input id="targetPrice" type="number" min="1" step="0.01" placeholder="500" required />
+            </div>
+            <div>
+              <label for="floorPrice">Minimum Price ($)</label>
+              <input id="floorPrice" type="number" min="1" step="0.01" placeholder="350" required />
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="deadline">Sale Deadline</label>
+            <input id="deadline" type="datetime-local" required />
+          </div>
+        </form>
 
         <div class="actions">
-          <button id="sellBtn" class="primary-btn">
+          <button id="sellBtn" class="primary-btn" type="submit" form="intakeForm">
             <i data-lucide="tag"></i>
             Sell my stuff
           </button>
