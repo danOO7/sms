@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 
 const app = express();
 const HOST = process.env.HOST || '0.0.0.0';
-const PORT = Number(process.env.PORT || 8787);
+const PORT = Number(process.env.PORT || 8788);
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`;
 const DB_PATH = process.env.DB_PATH || './data/interactions.db';
 const INVITE_TTL_MIN = Number(process.env.INVITE_TTL_MIN || 10);
