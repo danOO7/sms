@@ -46,6 +46,11 @@ class MockConvoProvider {
     return { inviteLink, expiresAt };
   }
 
+  async sendMessage(channelId, text) {
+    console.log('[mock-outbound-message]', { channelId, text });
+    return { ok: true };
+  }
+
   validateWebhookSignature() {
     return true;
   }
@@ -86,6 +91,19 @@ class HttpConvoProvider {
     if (!response.ok) throw new Error(`createInvite failed (${response.status})`);
     const json = await response.json();
     return { inviteLink: json.inviteLink, expiresAt: json.expiresAt };
+  }
+
+  async sendMessage(channelId, text) {
+    const response = await fetch(`${this.apiBase}/channels/${encodeURIComponent(channelId)}/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({ text })
+    });
+    if (!response.ok) throw new Error(`sendMessage failed (${response.status})`);
+    return response.json();
   }
 
   validateWebhookSignature(signature) {
@@ -192,7 +210,7 @@ app.post('/api/v1/interactions/sell', async (req, res) => {
   }
 });
 
-app.post('/api/v1/webhooks/convo/join', (req, res) => {
+app.post('/api/v1/webhooks/convo/join', async (req, res) => {
   const signature = req.header('x-signature') || '';
   if (!provider.validateWebhookSignature(signature)) return res.status(401).json({ error: 'Invalid signature' });
 
@@ -200,9 +218,18 @@ app.post('/api/v1/webhooks/convo/join', (req, res) => {
   const interaction = getInteractionByChannelId(channelId);
   if (!interaction) return res.status(404).json({ error: 'Unknown channel' });
 
+  const wasActive = interaction.status === 'active';
   interaction.status = 'active';
   if (participant) interaction.participants = [...interaction.participants, participant];
   updateInteraction(interaction);
+
+  if (!wasActive) {
+    try {
+      await provider.sendMessage(channelId, 'Welcome to Sell my Stuff!');
+    } catch (error) {
+      console.error('welcome message send error', error);
+    }
+  }
 
   return res.json({ ok: true, interactionId: interaction.interactionId, status: interaction.status });
 });
